@@ -1,8 +1,5 @@
-import logging
-
+import time
 import tensorflow as tf
-
-tf.get_logger().setLevel(logging.ERROR)
 import numpy as np
 from tensorflow import keras
 from tensorflow.keras import layers
@@ -130,9 +127,10 @@ class Job:
             if len(failure_idx) != 0:
                 idx_to_reattempt = np.where(failure_idx % B == part2_round_num)[0]
                 if len(idx_to_reattempt) != 0:
-                    idx_to_reattempt = idx_to_reattempt[0]
+                    idx_to_reattempt = failure_idx[idx_to_reattempt[0]]
                     result = self.part1_pieces[idx_to_reattempt * num_workers + worker_idx]
-                    return ['uncoded', result, self.model_id]
+                    # print('reattempting due to prior failure', 'current round', self.round, 'attempted idx', idx_to_reattempt)
+                    return ['uncoded', result, self.model_id, None]
             pieces = self.part2_pieces[part2_round_num]
             to_go_idx = [pieces[i] for i in self.piece_map[worker_idx]]
             coefficients_to_go = self.coefficients[worker_idx]
@@ -172,6 +170,20 @@ class Job:
         result = (uncoded_res + coded_res) / self.num_data_points
         return result
 
+def check_window(window):
+    straggling_workers = 0
+    for worker_idx in range(num_workers):
+        location_ones = np.where(window[worker_idx, :])[0]
+        if len(location_ones) == 0:
+            continue
+        burst_length = location_ones[-1] - location_ones[0] + 1
+        straggling_workers += 1
+        if burst_length > B:
+            return 0
+    if straggling_workers > epsilon:
+        return 0
+    return 1
+
 
 def master():
     print('System specifications:')
@@ -183,6 +195,7 @@ def master():
     job_queue = []
     model_under_operation = 0
     straggling_map = np.zeros([num_workers, num_slots * 2])
+    time_spent = np.zeros_like(straggling_map)
     for slot in range(num_slots):
         print(slot)
         # add new job to the queue
@@ -244,19 +257,62 @@ def master():
                reqs.append(comm.Irecv(res, source=worker_idx+1, tag=tag))
         MPI.Request.waitall(reqs)
         for worker_idx in range(num_workers):
+            time_spent[worker_idx, slot] = comm.recv(source=worker_idx+1, tag=0)
+        crt_round_times = time_spent[:, slot]
+        sorted_idx_round_times = np.argsort(crt_round_times)
+
+        for idx in sorted_idx_round_times:
+            if crt_round_times[idx] > (1+tol)*crt_round_times[sorted_idx_round_times[0]]:
+                straggling_map[idx, slot] = 1
+                # print('pox', straggling_map[:, max(0, slot-(W-1+B)+1):slot+1])
+                # print(check_window(straggling_map[:, max(0, slot-(W-1+B)+1):slot+1]))
+                if check_window(straggling_map[:, max(0, slot-(W)+1):slot+1]) != 1:
+                    straggling_map[:, slot] = 0
+                    break
+        # print(straggling_map[:, max(0, slot - (W) + 1):slot + 1])
+        for idx in sorted_idx_round_times:
+            if straggling_map[idx, slot] == 1:
+                for job in job_queue:
+                    job.failure_map[idx, job.round] = 1
+        # print(time_spent[:, 0:slot + 1])
+        # print(straggling_map[:, 0:slot + 1])
+        for worker_idx in range(num_workers):
             for idx, res in enumerate(results[worker_idx]):
-                job_queue[idx].push_result(res, minitasks[worker_idx][idx][0], worker_idx, minitasks[worker_idx][idx][3])
+                if straggling_map[worker_idx, slot] == 0:
+                    # print(idx, worker_idx)
+                    job_queue[idx].push_result(res, minitasks[worker_idx][idx][0], worker_idx, minitasks[worker_idx][idx][3])
         # finalizing the round
         model_under_operation += 1
         model_under_operation = model_under_operation % (W + B - 1)
         for job in job_queue:
             job.next_round()
+    straggling_map = straggling_map[:, 0:num_slots]
+
+    time_spent = time_spent[:, 0:num_slots]
+    wait_map = 1 - straggling_map
+    effective_time = np.multiply(time_spent, wait_map)
+    round_time = np.max(effective_time, axis=0)
+    print(np.mean(round_time))
+    np.save('straggling_map', straggling_map)
+    np.save('time_spent', time_spent)
     for model in models:
         print(model.report_performance())
 
 def worker():
     model_under_operation = 0
+    state = 0
     for slot in range(num_slots):
+        # determine whether a node is straggler
+        if state == 0:
+            straggling_status = 0
+        else:
+            straggling_status = 1
+        if state == 0:
+            if np.random.binomial(1, a):
+                state = 1
+        else:
+            if np.random.binomial(1, b):
+                state = (state + 1) % (num_states+1)
         # receive new parameters from master
         crt_model = models[model_under_operation]
         weights = np.zeros(crt_model.flat_gradient_shape, float)
@@ -293,16 +349,25 @@ def worker():
         for coefficient in coefficients:
             req.append(comm.Irecv(coefficient, source=0, tag=1))
         MPI.Request.waitall(req)
+        init = time.time()
         results = []
+        if straggling_status == 0:
+            rep = 1
+        else:
+            rep = alpha
         for (minitask, coefficient, id) in zip(minitasks, coefficients, model_ids):
             x_train_crt = [x_train[idx] for idx in minitask]
             y_train_crt = [y_train[idx] for idx in minitask]
-            results.append(models[id].calculate_gradients(x_train_crt, y_train_crt, coefficient).numpy())
+            for _ in range(rep):
+                tmp = models[id].calculate_gradients(x_train_crt, y_train_crt, coefficient).numpy()
+            results.append(tmp)
+        time_spent = time.time() - init
         # transmit results back to the master
         req = []
         for tag, res in enumerate(results):
             req.append(comm.Isend(np.ascontiguousarray(res, dtype=float), dest=0, tag=tag))
         MPI.Request.waitall(req)
+        comm.send(time_spent, dest=0, tag=0)
 
 
 comm = MPI.COMM_WORLD
@@ -310,8 +375,10 @@ rank = comm.Get_rank()
 (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
 x_train = np.reshape(x_train, (-1, 28, 28, 1)) / 255.
 x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
-batch_size_per_worker = 256
-num_slots = 10000
+batch_size_per_worker = 512
+alpha = 5
+tol = 0.9
+num_slots = 50
 num_workers = 2
 W = 3
 epsilon = 1
@@ -319,9 +386,10 @@ B = 2
 x = (epsilon + 1) * (W - 1) / (B + W - 1 + epsilon * (W - 1))
 lr_list = [0.01, 0.02, 0.03, 0.04]
 models = [Model(lr) for lr in lr_list]
-
+a = 0.2
+b = 0.2
+num_states = 2
 if rank == 0:
     master()
-
 else:
     worker()
