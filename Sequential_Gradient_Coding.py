@@ -121,15 +121,16 @@ class Job:
             return ['uncoded', result, self.model_id, None]
         else:
             # coded parts
-            focused_slice = self.failure_map[worker_idx, :]
+            focused_slice = self.failure_map[worker_idx, 0:W-1]
             failure_idx = np.where(focused_slice == 1)[0]
-            part2_round_num = self.round - (W - 1)
+            part2_round_num = self.round - (W-1)
             if len(failure_idx) != 0:
                 idx_to_reattempt = np.where(failure_idx % B == part2_round_num)[0]
                 if len(idx_to_reattempt) != 0:
                     idx_to_reattempt = failure_idx[idx_to_reattempt[0]]
+                    # print('reattempting due to prior failure', 'current round', self.round, 'attempted idx',
+                    #       idx_to_reattempt)
                     result = self.part1_pieces[idx_to_reattempt * num_workers + worker_idx]
-                    # print('reattempting due to prior failure', 'current round', self.round, 'attempted idx', idx_to_reattempt)
                     return ['uncoded', result, self.model_id, None]
             pieces = self.part2_pieces[part2_round_num]
             to_go_idx = [pieces[i] for i in self.piece_map[worker_idx]]
@@ -143,11 +144,11 @@ class Job:
             self.coded_results[round_idx].append([result, worker_idx])
     def calculate_result(self):
         if len(self.uncoded_results) != num_workers*(W-1):
-            print('ERROR: not enough uncoded pieces received')
+            print('ERROR: not enough uncoded pieces received. Got: ', len(self.uncoded_results), 'need: ', num_workers*(W-1))
         coded_results = []
         for round_idx, round_pieces in enumerate(self.coded_results):
             if len(round_pieces) < num_workers - epsilon:
-                print('ERROR: not enough coded pieces received')
+                print('ERROR: not enough coded pieces received. Got: ', len(round_pieces), 'Need: ', num_workers - epsilon)
             pieces = [round_pieces[i][0] for i in range(num_workers-epsilon)]
             idx = [round_pieces[i][1] for i in range(num_workers-epsilon)]
             rec_ident = [self.identifiers[i] for i in idx]
@@ -271,7 +272,7 @@ def master():
                 if check_window(straggling_map[:, max(0, slot-(W)+1):slot+1]) != 1:
                     straggling_map[:, slot] = 0
                     break
-        # print(straggling_map[:, max(0, slot - (W) + 1):slot + 1])
+        print(straggling_map[:, max(0, slot - (W+B-1) + 1):slot + 1])
         for idx in sorted_idx_round_times:
             if straggling_map[idx, slot] == 1:
                 for job in job_queue:
@@ -379,13 +380,13 @@ rank = comm.Get_rank()
 (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
 x_train = np.reshape(x_train, (-1, 28, 28, 1)) / 255.
 x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
-batch_size_per_worker = 256
+batch_size_per_worker = 64
 alpha = 5
 tol = 0.9
 num_slots = 5000
-num_workers = 4
+num_workers = 3
 W = 4
-epsilon = 2
+epsilon = 1
 B = 2
 x = (epsilon + 1) * (W - 1) / (B + W - 1 + epsilon * (W - 1))
 lr_list = [0.01, 0.03, 0.05, 0.07, 0.09]
