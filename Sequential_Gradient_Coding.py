@@ -245,9 +245,11 @@ def master():
                     reqs.append(comm.Isend(np.array([1.]), dest=worker_idx + 1, tag=1))
                 else:
                     for part in minitask[1][0]:
-                        reqs.append(comm.Isend(np.ascontiguousarray(part), dest=worker_idx + 1, tag=0))
-                    reqs.append(comm.Isend(minitask[1][1], dest=worker_idx + 1, tag=1))
+                        reqs.append(comm.Isend(np.ascontiguousarray(part, dtype=int), dest=worker_idx + 1, tag=0))
+                    reqs.append(comm.Isend(np.ascontiguousarray(minitask[1][1], dtype=float), dest=worker_idx + 1, tag=1))
+        # print(len(reqs))
         MPI.Request.waitall(reqs)
+
         # get back the results
         reqs = []
         results = [[np.zeros(crt_model.flat_gradient_shape) for _ in range(len(minitasks[worker_idx]))] for worker_idx
@@ -342,13 +344,15 @@ def worker():
         req = []
         minitasks = [[np.zeros(minitaks_details_arr[minitask_idx][1], dtype=int) for _ in
                       range(minitaks_details_arr[minitask_idx][0])] for minitask_idx in range(minitaks_len)]
-        coefficients = [np.zeros(minitaks_details[0], dtype=float) for _ in range(minitaks_len)]
+        coefficients = [np.zeros(minitaks_details_arr[minitask_idx][0], dtype=float) for minitask_idx in range(minitaks_len)]
         for minitask in minitasks:
             for buffer in minitask:
                 req.append(comm.Irecv(buffer, source=0, tag=0))
         for coefficient in coefficients:
             req.append(comm.Irecv(coefficient, source=0, tag=1))
+        # print('worker', len(req))
         MPI.Request.waitall(req)
+        # print('got all poxs')
         init = time.time()
         results = []
         if straggling_status == 0:
@@ -375,20 +379,20 @@ rank = comm.Get_rank()
 (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
 x_train = np.reshape(x_train, (-1, 28, 28, 1)) / 255.
 x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
-batch_size_per_worker = 512
+batch_size_per_worker = 256
 alpha = 5
 tol = 0.9
-num_slots = 50
-num_workers = 2
-W = 3
-epsilon = 1
+num_slots = 5000
+num_workers = 4
+W = 4
+epsilon = 2
 B = 2
 x = (epsilon + 1) * (W - 1) / (B + W - 1 + epsilon * (W - 1))
 lr_list = [0.01, 0.02, 0.03, 0.04]
 models = [Model(lr) for lr in lr_list]
 a = 0.2
 b = 0.2
-num_states = 2
+num_states = 1
 if rank == 0:
     master()
 else:
