@@ -215,17 +215,17 @@ rank = comm.Get_rank()
 (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
 x_train = np.reshape(x_train, (-1, 28, 28, 1)) / 255.
 x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
-batch_size_per_worker = 512
+batch_size_per_worker = 64
 alpha = 5
 tol = 0.9
 num_slots = 1000
-num_workers = 2
+num_workers = 3
 epsilon = 1
-lr_list = [0.01, 0.02, 0.03, 0.04]
+lr_list = [0.01, 0.03, 0.05, 0.07, 0.09]
 models = [Model(lr) for lr in lr_list]
 a = 0.2
 b = 0.2
-num_states = 2
+num_states = 1
 if rank == 0:
     master()
 else:
