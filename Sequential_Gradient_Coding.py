@@ -320,8 +320,8 @@ def master():
     effective_time = np.multiply(time_spent, wait_map)
     round_time = np.max(effective_time, axis=0)
     print(np.mean(round_time))
-    np.save('straggling_map', straggling_map)
-    np.save('time_spent', time_spent)
+    np.save('straggling_map_seq', straggling_map)
+    np.save('time_spent_seq', time_spent)
     for model in models:
         print(model.report_performance())
 

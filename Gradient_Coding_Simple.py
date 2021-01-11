@@ -150,7 +150,8 @@ def master():
         model_under_operation = (model_under_operation + 1) % len(models)
     for model in models:
         print(model.report_performance())
-    print(round_times)
+    np.save('round_times_grad_coding', np.array(round_times))
+    # print(round_times)
 def worker():
     model_under_operation = 0
     state = 0
