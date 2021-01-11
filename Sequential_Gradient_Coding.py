@@ -99,9 +99,17 @@ class Job:
         self.failure_map = np.zeros([num_workers, W + B - 1])
         self.uncoded_results = []
         self.coded_results = [[] for _ in range(B)]
-
+        self.content_map = np.zeros([num_workers, W+B-1], dtype=int)
     def next_round(self):
+        # record success of reattempted pieces
+        if self.round >= W-1:
+            for worker_idx in range(num_workers):
+                if self.failure_map[worker_idx, self.round] == 0:
+                    if self.content_map[worker_idx, self.round] >= 0:
+                        # print('pox', self.content_map[worker_idx, self.round])
+                        self.failure_map[worker_idx, self.content_map[worker_idx, self.round]] = 0
         self.round += 1
+
 
     def set_failure_status(self, round, worker_idx):
         self.failure_map[worker_idx, round] = 1
@@ -118,23 +126,38 @@ class Job:
         if self.round < W - 1:
             # uncoded tasks
             result = self.part1_pieces[self.round * num_workers + worker_idx]
+            self.content_map[worker_idx, self.round] = self.round
             return ['uncoded', result, self.model_id, None]
         else:
-            # coded parts
-            focused_slice = self.failure_map[worker_idx, 0:W-1]
-            failure_idx = np.where(focused_slice == 1)[0]
+            # coded parts and reattempts
             part2_round_num = self.round - (W-1)
-            if len(failure_idx) != 0:
-                idx_to_reattempt = np.where(failure_idx % B == part2_round_num)[0]
-                if len(idx_to_reattempt) != 0:
-                    idx_to_reattempt = failure_idx[idx_to_reattempt[0]]
-                    # print('reattempting due to prior failure', 'current round', self.round, 'attempted idx',
-                    #       idx_to_reattempt)
-                    result = self.part1_pieces[idx_to_reattempt * num_workers + worker_idx]
-                    return ['uncoded', result, self.model_id, None]
+            if self.failure_map[worker_idx, part2_round_num] == 1:
+                result = self.part1_pieces[part2_round_num * num_workers + worker_idx]
+                self.content_map[worker_idx, self.round] = part2_round_num
+                # print('reattempting due to prior failure', 'current round', self.round, 'attempted idx', part2_round_num)
+                return ['uncoded', result, self.model_id, None]
+            if np.sum(self.failure_map[worker_idx, B:W-1]) > 0:
+                focused_slice = self.failure_map[worker_idx, B:W-1]
+                to_go = np.where(focused_slice == 1)[0][0] + B
+                self.content_map[worker_idx, self.round] = to_go
+                result = self.part1_pieces[to_go * num_workers + worker_idx]
+                # print('reattempting due to prior failure', 'current round', self.round, 'attempted idx', to_go)
+                return ['uncoded', result, self.model_id, None]
+
+            # focused_slice = self.failure_map[worker_idx, 0:W-1]
+            # failure_idx = np.where(focused_slice == 1)[0]
+
+            # if len(failure_idx) != 0:
+            #     idx_to_reattempt = np.where(failure_idx % B == part2_round_num)[0]
+            #     if len(idx_to_reattempt) != 0:
+            #         idx_to_reattempt = failure_idx[idx_to_reattempt[0]]
+            #         # print('reattempting due to prior failure', 'current round', self.round, 'attempted idx',
+            #         #       idx_to_reattempt)
+
             pieces = self.part2_pieces[part2_round_num]
             to_go_idx = [pieces[i] for i in self.piece_map[worker_idx]]
             coefficients_to_go = self.coefficients[worker_idx]
+            self.content_map[worker_idx, self.round] = -1
             return ['coded', [to_go_idx, coefficients_to_go], self.model_id, part2_round_num]
 
     def push_result(self, result, type, worker_idx, round_idx):
@@ -145,6 +168,7 @@ class Job:
     def calculate_result(self):
         if len(self.uncoded_results) != num_workers*(W-1):
             print('ERROR: not enough uncoded pieces received. Got: ', len(self.uncoded_results), 'need: ', num_workers*(W-1))
+            exit(0)
         coded_results = []
         for round_idx, round_pieces in enumerate(self.coded_results):
             if len(round_pieces) < num_workers - epsilon:
@@ -272,7 +296,7 @@ def master():
                 if check_window(straggling_map[:, max(0, slot-(W)+1):slot+1]) != 1:
                     straggling_map[:, slot] = 0
                     break
-        print(straggling_map[:, max(0, slot - (W+B-1) + 1):slot + 1])
+        # print(straggling_map[:, max(0, slot - (W+B-1) + 1):slot + 1])
         for idx in sorted_idx_round_times:
             if straggling_map[idx, slot] == 1:
                 for job in job_queue:
@@ -383,7 +407,7 @@ x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
 batch_size_per_worker = 64
 alpha = 5
 tol = 0.9
-num_slots = 5000
+num_slots = 1000
 num_workers = 3
 W = 4
 epsilon = 1
