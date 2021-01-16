@@ -25,6 +25,8 @@ class Model:
         self.shapes = []
         self.flat_gradient_shape = []
         self.calculate_gradients([x_train[0:1]], [y_train[0:1]], [1])
+        self.accuracy = []
+        self.loss = []
 
     def calculate_gradients(self, x_train, y_train, coefficients):
         with tf.GradientTape() as tape:
@@ -60,6 +62,9 @@ class Model:
     def update_params(self, flat_grad):
         output = self.unflatten(flat_grad)
         self.optimizer.apply_gradients(zip(output, self.model.trainable_weights))
+        acc, loss = self.report_performance()
+        self.accuracy.append(acc)
+        self.loss.append(loss)
 
     def report_performance(self):
         test_loss = tf.keras.metrics.Mean(name='test_loss')
@@ -73,6 +78,7 @@ class Model:
             test_accuracy.update_state(y_test[batchIdx], logits)
             test_loss.update_state(lossValue)
         return test_accuracy.result().numpy(), test_loss.result().numpy()
+
 
 
 class Job:
@@ -322,8 +328,10 @@ def master():
     print(np.mean(round_time))
     np.save('straggling_map_seq', straggling_map)
     np.save('time_spent_seq', time_spent)
-    for model in models:
+    for idx, model in enumerate(models):
         print(model.report_performance())
+        np.save('Model_'+str(idx)+'sequential_test_loss', model.accuracy)
+        np.save('Model_' + str(idx) + 'sequential_test_accuracy', model.accuracy)
 
 def worker():
     model_under_operation = 0
@@ -404,16 +412,16 @@ rank = comm.Get_rank()
 (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
 x_train = np.reshape(x_train, (-1, 28, 28, 1)) / 255.
 x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
-batch_size_per_worker = 64
+batch_size_per_worker = 256
 alpha = 5
 tol = 0.9
-num_slots = 1000
-num_workers = 3
-W = 4
-epsilon = 1
+num_slots = 5000
+num_workers = 4
+W = 3
+epsilon = 2
 B = 2
 x = (epsilon + 1) * (W - 1) / (B + W - 1 + epsilon * (W - 1))
-lr_list = [0.01, 0.03, 0.05, 0.07, 0.09]
+lr_list = [0.01, 0.03, 0.05, 0.07]
 models = [Model(lr) for lr in lr_list]
 a = 0.2
 b = 0.2

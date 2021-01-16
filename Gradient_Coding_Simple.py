@@ -25,6 +25,8 @@ class Model:
         self.shapes = []
         self.flat_gradient_shape = []
         self.calculate_gradients([x_train[0:1]], [y_train[0:1]], [1])
+        self.accuracy = []
+        self.loss = []
 
     def calculate_gradients(self, x_train, y_train, coefficients):
         with tf.GradientTape() as tape:
@@ -60,6 +62,9 @@ class Model:
     def update_params(self, flat_grad):
         output = self.unflatten(flat_grad)
         self.optimizer.apply_gradients(zip(output, self.model.trainable_weights))
+        acc, loss = self.report_performance()
+        self.accuracy.append(acc)
+        self.loss.append(loss)
 
     def report_performance(self):
         test_loss = tf.keras.metrics.Mean(name='test_loss')
@@ -148,8 +153,10 @@ def master():
         recon = np.sum([recon_coef[i] * pieces[i] for i in range(num_workers - epsilon)], axis=0)
         crt_model.update_params(recon/len(np.concatenate(idx_parts)))
         model_under_operation = (model_under_operation + 1) % len(models)
-    for model in models:
+    for idx, model in enumerate(models):
         print(model.report_performance())
+        np.save('Model_' + str(idx) + 'grad_code_test_loss', model.accuracy)
+        np.save('Model_' + str(idx) + 'grad_code_test_accuracy', model.accuracy)
     np.save('round_times_grad_coding', np.array(round_times))
     # print(round_times)
 def worker():
@@ -216,13 +223,13 @@ rank = comm.Get_rank()
 (x_train, y_train), (x_test, y_test) = keras.datasets.mnist.load_data()
 x_train = np.reshape(x_train, (-1, 28, 28, 1)) / 255.
 x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
-batch_size_per_worker = 64
+batch_size_per_worker = 256
 alpha = 5
 tol = 0.9
-num_slots = 1000
-num_workers = 3
+num_slots = 5000
+num_workers = 4
 epsilon = 1
-lr_list = [0.01, 0.03, 0.05, 0.07, 0.09]
+lr_list = [0.01, 0.03, 0.05, 0.07]
 models = [Model(lr) for lr in lr_list]
 a = 0.2
 b = 0.2
