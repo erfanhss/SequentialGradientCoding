@@ -159,12 +159,12 @@ def master():
     model_under_operation = 0
     straggling_map = np.zeros([num_workers, num_slots * 2])
     time_spent = np.zeros_like(straggling_map)
+    round_times = np.zeros(num_slots)
     for slot in range(num_slots):
         print(slot)
         # add new job to the queue
         idx = np.random.permutation(len(x_train))[0:num_workers * batch_size_per_worker]
         job_queue.append(Job(model_under_operation, idx, slot))
-
         # transmit minitasks
         minitasks = []
         # update parameters in the workers
@@ -176,6 +176,7 @@ def master():
         MPI.Request.waitall(param_req)
         # print('Parameters updated')
         # create minitask
+        left_over = 0
         job_pieces_received = []
         job_idx_per_worker = np.zeros(num_workers, dtype=int)
         for job in job_queue:
@@ -188,6 +189,7 @@ def master():
                         minitasks.append(prev_job.get_minitask(worker_idx))
                         job_pieces_received[job_idx] += 1
                         reattempt = 1
+                        left_over = 1
                         job_idx_per_worker[worker_idx] = int(job_idx)
                         break
             if reattempt == 0:
@@ -268,6 +270,7 @@ def master():
 def worker():
     model_under_operation = 0
     state = 0
+    seed_arr = np.random.RandomState(seed=rank).randint(0, 100000, size=num_slots)
     for slot in range(num_slots):
         # determine whether a node is straggler
         if state == 0:
@@ -275,10 +278,10 @@ def worker():
         else:
             straggling_status = 1
         if state == 0:
-            if np.random.binomial(1, a):
+            if np.random.RandomState(seed=seed_arr[slot]).binomial(1, a):
                 state = 1
         else:
-            if np.random.binomial(1, b):
+            if np.random.RandomState(seed=seed_arr[slot]).binomial(1, b):
                 state = (state + 1) % (num_states+1)
         # receive new parameters from master
         crt_model = models[model_under_operation]
@@ -333,15 +336,16 @@ alpha = 5
 tol = 0.9
 num_slots = 5000
 num_workers = 4
-x = 1
+x = 4
 epsilon = 2
-B = 2
+B = 1
 W = x*B+1
 s = np.ceil((B*epsilon)/(W-1+B))
-lr_list = [0.01, 0.03, 0.05, 0.07]
+num_models = 8
+lr_list = np.linspace(0.01, 0.1, num_models)
 models = [Model(lr) for lr in lr_list]
-a = 0.2
-b = 0.2
+a = 0.05
+b = 0.8
 num_states = 1
 if rank == 0:
     master()

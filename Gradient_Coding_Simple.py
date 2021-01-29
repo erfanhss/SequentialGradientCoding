@@ -143,7 +143,7 @@ def master():
         crt_round_times = time_spent[:, slot]
         sorted_idx = np.argsort(crt_round_times)
         rec_idx = sorted_idx[0:num_workers-epsilon]
-        round_times.append(crt_round_times[sorted_idx[num_workers-epsilon-1]])
+        round_times.append(crt_round_times[sorted_idx[num_workers-epsilon]])
         # compute the update
         pieces = [results[i] for i in rec_idx]
         rec_ident = [identifiers[i] for i in rec_idx]
@@ -162,6 +162,7 @@ def master():
 def worker():
     model_under_operation = 0
     state = 0
+    seed_arr = np.random.RandomState(seed=rank).randint(0, 100000, size=num_slots)
     for slot in range(num_slots):
         # determine whether a node is straggler
         if state == 0:
@@ -169,10 +170,10 @@ def worker():
         else:
             straggling_status = 1
         if state == 0:
-            if np.random.binomial(1, a):
+            if np.random.RandomState(seed=seed_arr[slot]).binomial(1, a):
                 state = 1
         else:
-            if np.random.binomial(1, b):
+            if np.random.RandomState(seed=seed_arr[slot]).binomial(1, b):
                 state = (state + 1) % (num_states + 1)
         # receive new parameters from master
         crt_model = models[model_under_operation]
@@ -224,15 +225,16 @@ rank = comm.Get_rank()
 x_train = np.reshape(x_train, (-1, 28, 28, 1)) / 255.
 x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
 batch_size_per_worker = 256
-alpha = 5
+alpha = 10
 tol = 0.9
 num_slots = 5000
 num_workers = 4
 epsilon = 1
-lr_list = [0.01, 0.03, 0.05, 0.07]
+num_models = 8
+lr_list = np.linspace(0.01, 0.1, num_models)
 models = [Model(lr) for lr in lr_list]
-a = 0.2
-b = 0.2
+a = 0.05
+b = 0.8
 num_states = 1
 if rank == 0:
     master()
