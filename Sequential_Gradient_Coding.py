@@ -330,7 +330,7 @@ def master():
     np.save('time_spent_seq', time_spent)
     for idx, model in enumerate(models):
         print(model.report_performance())
-        np.save('Model_'+str(idx)+'sequential_test_loss', model.accuracy)
+        np.save('Model_'+str(idx)+'sequential_test_loss', model.loss)
         np.save('Model_' + str(idx) + 'sequential_test_accuracy', model.accuracy)
 
 def worker():

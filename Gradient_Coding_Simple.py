@@ -155,7 +155,7 @@ def master():
         model_under_operation = (model_under_operation + 1) % len(models)
     for idx, model in enumerate(models):
         print(model.report_performance())
-        np.save('Model_' + str(idx) + 'grad_code_test_loss', model.accuracy)
+        np.save('Model_' + str(idx) + 'grad_code_test_loss', model.loss)
         np.save('Model_' + str(idx) + 'grad_code_test_accuracy', model.accuracy)
     np.save('round_times_grad_coding', np.array(round_times))
     # print(round_times)
