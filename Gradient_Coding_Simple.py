@@ -199,7 +199,7 @@ def worker():
         # compute the gradient
         local_x_train = [x_train[subpart] for subpart in parts]
         local_y_train = [y_train[subpart] for subpart in parts]
-        if state == 0:
+        if straggling_status == 0:
             rep = 1
         else:
             rep = alpha
