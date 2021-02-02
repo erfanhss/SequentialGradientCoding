@@ -345,8 +345,8 @@ num_models = 8
 lr_list = np.linspace(0.01, 0.1, num_models)
 models = [Model(lr) for lr in lr_list]
 a = 0.05
-b = 0.8
-num_states = 1
+b = 0.5
+num_states = 2
 if rank == 0:
     master()
 else:
