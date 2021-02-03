@@ -418,15 +418,15 @@ alpha = 10
 tol = 0.9
 num_slots = 5000
 num_workers = 4
-W = 6
+W = 12
 epsilon = 4
-B = 3
+B = 11
 num_models = W+B-1
 x = (epsilon + 1) * (W - 1) / (B + W - 1 + epsilon * (W - 1))
 lr_list = np.linspace(0.01, 0.1, num_models)
 models = [Model(lr) for lr in lr_list]
 a = 0.05
-b = 0.5
+b = 0.1
 num_states = 2
 if rank == 0:
     master()
