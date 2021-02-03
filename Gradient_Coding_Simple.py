@@ -230,11 +230,11 @@ tol = 0.9
 num_slots = 5000
 num_workers = 4
 epsilon = 2
-num_models = 8
+num_models = 22
 lr_list = np.linspace(0.01, 0.1, num_models)
 models = [Model(lr) for lr in lr_list]
 a = 0.05
-b = 0.5
+b = 0.1
 num_states = 2
 if rank == 0:
     master()
