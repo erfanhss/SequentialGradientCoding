@@ -336,7 +336,7 @@ def master():
 def worker():
     model_under_operation = 0
     state = 0
-    seed_arr = np.random.RandomState(seed=rank).randint(0, 100000, size=num_slots)
+    seed_arr = np.random.RandomState(seed=rank+2).randint(0, 100000, size=num_slots)
     for slot in range(num_slots):
         # determine whether a node is straggler
         if state == 0:
@@ -414,20 +414,20 @@ rank = comm.Get_rank()
 x_train = np.reshape(x_train, (-1, 28, 28, 1)) / 255.
 x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
 batch_size_per_worker = 256
-alpha = 10
+alpha = 5
 tol = 0.9
-num_slots = 5000
+num_slots = 6000
 num_workers = 4
-W = 12
+W = 8
 epsilon = 3
-B = 11
+B = 5
 num_models = W+B-1
 x = (epsilon + 1) * (W - 1) / (B + W - 1 + epsilon * (W - 1))
 lr_list = np.linspace(0.01, 0.1, num_models)
 models = [Model(lr) for lr in lr_list]
 a = 0.05
-b = 0.1
-num_states = 2
+b = 0.7
+num_states = 4
 if rank == 0:
     master()
 else:
