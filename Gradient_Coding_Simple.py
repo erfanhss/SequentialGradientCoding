@@ -143,7 +143,7 @@ def master():
         crt_round_times = time_spent[:, slot]
         sorted_idx = np.argsort(crt_round_times)
         rec_idx = sorted_idx[0:num_workers-epsilon]
-        round_times.append(crt_round_times[sorted_idx[num_workers-epsilon]])
+        round_times.append(crt_round_times[sorted_idx[num_workers-epsilon-1]])
         # compute the update
         pieces = [results[i] for i in rec_idx]
         rec_ident = [identifiers[i] for i in rec_idx]
