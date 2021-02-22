@@ -21,10 +21,10 @@ class Model:
         outputs = layers.Dense(10, name="predictions")(x1)
         self.model = keras.Model(inputs=inputs, outputs=outputs)
         self.optimizer = keras.optimizers.SGD(learning_rate=lr)
-        self.loss_fn = keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.SUM)
+        self.loss_fn = keras.losses.SparseCategoricalCrossentropy(from_logits=True)
         self.shapes = []
         self.flat_gradient_shape = []
-        self.calculate_gradients([x_train[0:1]], [y_train[0:1]], [1])
+        self.calculate_gradients(x_train[0:1], y_train[0:1])
         self.accuracy = []
         self.loss = []
 
@@ -98,9 +98,9 @@ def master():
     round_times = []
     straggling_map = np.zeros([num_workers, num_slots])
     wait_map = np.zeros_like(straggling_map)
-    gradient_queue = [[np.zeros(models[0].flat_gradient_shape) for _ in range(num_workers)] for _ in range(T+1)]
+    gradient_queue = [np.zeros(models[0].flat_gradient_shape) for _ in range(2)]
     receive_queue = [[np.zeros(models[0].flat_gradient_shape) for _ in range(num_workers)] for _ in range(T+1)]
-
+    data_points_queue = []
     for slot in range(num_slots):
         crt_model = models[model_under_operation]
         print(slot)
@@ -112,6 +112,7 @@ def master():
         MPI.Request.waitall(param_req)
         # add new job to the queue
         idx = np.random.permutation(len(x_train))[0:num_workers * batch_size_per_worker]
+        data_points_queue.append([model_under_operation, idx])
         idx_parts = divide_into_pieces(idx, num_workers)
         piece_map = [[(worker_idx + i) % num_workers for i in range(s + 1)] for worker_idx in
                      range(num_workers)]
@@ -125,8 +126,8 @@ def master():
         # transmit tasks
         reqs = []
         for worker_idx in range(num_workers):
-            for subtask in worker_tasks[worker_idx]:
-                reqs.append(comm.Isend(np.ascontiguousarray(subtask, dtype=int), dest=worker_idx+1, tag=0))
+            for task_idx, subtask in enumerate(worker_tasks[worker_idx]):
+                reqs.append(comm.Isend(np.ascontiguousarray(subtask, dtype=int), dest=worker_idx+1, tag=task_idx))
         MPI.Request.waitall(reqs)
         #### TODO: Rest of processing
         # receive results
@@ -141,8 +142,11 @@ def master():
         # identify stragglers
         straggling_map[:, slot] = np.random.binomial(1, p, num_workers)
         wait_map[:, slot] = straggling_map[:, slot]
-        if check_window(wait_map[:, max(0, slot-T):slot+1]) == 0:
+        if check_window(wait_map[:, max(0, slot-T):slot+1], T, s) == 0:
             wait_map[:, slot] = 0
+        print(straggling_map[:, max(0, slot - T):slot + 1])
+        print(wait_map[:, max(0, slot-T):slot+1])
+
         receive_queue.pop(0)
         receive_queue.append(results)
         # compute the update
@@ -150,16 +154,14 @@ def master():
             l_tild = [[np.zeros(crt_model.flat_gradient_shape) for _ in range(num_workers)] for _ in range(T+1)]
             for idx, l in enumerate(receive_queue):
                 if idx == 0:
-                    sum0 = np.sum(gradient_queue[0], axis=0)
-                    sum1 = np.sum(gradient_queue[1], axis=0)
-                    l_tild[idx] = [l[j] - sum0*y2[j]-sum1*y1[j] for j in range(num_workers)]
-                if idx == 1:
-                    sum1 = np.sum(gradient_queue[1], axis=0)
-                    l_tild[idx] = [l[j] - sum1 * y2[j] for j in range(num_workers)]
+                    l_tild[idx] = [l[j] - gradient_queue[0]*y2[j]-gradient_queue[1]*y1[j] for j in range(num_workers)]
+                elif idx == 1:
+                    l_tild[idx] = [l[j] - gradient_queue[1] * y2[j] for j in range(num_workers)]
                 else:
                     l_tild[idx] = l
 
             if np.sum(wait_map[:, slot-2]) < 3:
+                print("case 1")
                 chosen_worker_idx = []
                 for worker_idx in range(num_workers):
                     if len(chosen_worker_idx) < 2:
@@ -167,50 +169,88 @@ def master():
                             chosen_worker_idx.append(worker_idx)
                     else:
                         break
+                print(chosen_worker_idx)
+                if len(chosen_worker_idx) != 2:
+                    print("Not enough pieces received")
+
                 tmp = S[:, [8+chosen_worker_idx[0], 8+chosen_worker_idx[1]]]
-                recon_coefss = np.linalg.inv(tmp[[0, 5], :])[:, -1]
+                print(tmp[[0, 5], :])
+                recon_coefs = np.linalg.inv(tmp[[0, 5], :])[:, -1]
                 recon = np.zeros(crt_model.flat_gradient_shape)
                 for j in range(2):
-                    recon += l_tild[0][chosen_worker_idx[j]]*recon_coefss[j]
-            elif np.sum(wait_map[:, slot-1] < 2):
+                    recon += l_tild[0][chosen_worker_idx[j]]*recon_coefs[j]
+            elif np.sum(wait_map[:, slot-1]) < 2:
+                print("case 2")
                 chosen_worker_idx = []
                 for worker_idx in range(num_workers):
                     if len(chosen_worker_idx) < 3:
-                        if wait_map[worker_idx, slot - 2] == 0:
+                        if wait_map[worker_idx, slot - 1] == 0:
                             chosen_worker_idx.append(worker_idx)
                     else:
                         break
+                print(chosen_worker_idx)
+                if len(chosen_worker_idx) != 3:
+                    print("Not enough pieces received")
+
                 tmp = S[:, [4 + chosen_worker_idx[0], 4 + chosen_worker_idx[1], 4 + chosen_worker_idx[2]]]
-                recon_coefss = np.linalg.inv(tmp[[0, 4, 5], :])[:, -1]
+                print(tmp[[1, 4, 5], :])
+                recon_coefs = np.linalg.inv(tmp[[1, 4, 5], :])[:, -1]
                 recon = np.zeros(crt_model.flat_gradient_shape)
                 for j in range(3):
-                    recon += l_tild[1][chosen_worker_idx[j]] * recon_coefss[j]
+                    recon += l_tild[1][chosen_worker_idx[j]] * recon_coefs[j]
+            elif np.sum(wait_map[:, slot]) < 1:
+                print("case 3")
+                chosen_worker_idx = []
+                for worker_idx in range(num_workers):
+                    if len(chosen_worker_idx) < 4:
+                        if wait_map[worker_idx, slot] == 0:
+                            chosen_worker_idx.append(worker_idx)
+                    else:
+                        break
+                print(chosen_worker_idx)
+                if len(chosen_worker_idx) != 4:
+                    print("Not enough pieces received")
+
+                tmp = S[:, chosen_worker_idx]
+                print(tmp[[2, 3, 4, 5], :])
+                recon_coefs = np.linalg.inv(tmp[[2, 3, 4, 5], :])[:, -1]
+                recon = np.zeros(crt_model.flat_gradient_shape)
+                for j in range(4):
+                    recon += l_tild[2][chosen_worker_idx[j]] * recon_coefs[j]
             else:
+                print("case 4")
                 chosen_worker_idx = []
                 chosen_columns = []
                 for t in range(T+1):
                     for worker_idx in range(num_workers):
                         if len(chosen_worker_idx) < 6:
-                            if wait_map[worker_idx, t] == 0:
+                            if wait_map[worker_idx, slot-2+t] == 0:
                                 chosen_worker_idx.append([worker_idx, t])
                                 if t == 0:
                                     chosen_columns.append(worker_idx+8)
-                                elif t==1:
+                                elif t == 1:
                                     chosen_columns.append(worker_idx+4)
                                 else:
                                     chosen_columns.append(worker_idx)
                         else:
                             break
-
-                recon_coefss = np.linalg.inv(
+                print(chosen_worker_idx)
+                if len(chosen_worker_idx) != 6:
+                    print("Not enough pieces received")
+                print(S[:, chosen_columns])
+                recon_coefs = np.linalg.inv(
                     S[:, chosen_columns])[:, -1]
                 recon = np.zeros(crt_model.flat_gradient_shape)
                 for j in range(6):
-                    recon += l_tild[chosen_worker_idx[j][1]][chosen_worker_idx[j][0]] * recon_coefss[j]
-        crt_model.update_params(recon/num_workers/batch_size_per_worker)
+                    recon += l_tild[chosen_worker_idx[j][1]][chosen_worker_idx[j][0]] * recon_coefs[j]
+            gradient_queue.pop(0)
+            gradient_queue.append(recon)
+            print((recon/num_workers)[0:10])
+            tmp = data_points_queue.pop(0)
+            print(models[tmp[0]].calculate_gradients(x_train[tmp[1]], y_train[tmp[1]])[0:10])
+            model_to_update = (model_under_operation - 2) % len(models)
+            models[model_to_update].update_params(recon/num_workers)
         model_under_operation = (model_under_operation + 1) % len(models)
-        gradient_queue.pop(0)
-        gradient_queue.append(recon)
     for idx, model in enumerate(models):
         print(model.report_performance())
         np.save('Model_' + str(idx) + 'grad_code_test_loss', model.loss)
@@ -251,15 +291,16 @@ def worker():
         # receive tasks
         parts = [np.zeros(task_details[1], dtype=int) for _ in range(task_details[0])]
         reqs = []
-        for subpart in parts:
-            reqs.append(comm.Irecv(subpart, source=0, tag=0))
+        for part_idx, subpart in enumerate(parts) :
+            reqs.append(comm.Irecv(subpart, source=0, tag=part_idx))
         MPI.Request.waitall(reqs)
         # compute the gradient
         gradient_buffer.pop(0)
         gradient_buffer.append([np.zeros(crt_model.flat_gradient_shape) for _ in range(s+1)])
         init = time.time()
-        for part_idx, part in parts:
+        for part_idx, part in enumerate(parts):
             grad = crt_model.calculate_gradients(x_train[part], y_train[part]).numpy()
+            # print(grad.shape)
             gradient_buffer[-1][part_idx] = grad
         time_spent_crt = time.time() - init
         # print('gradient computed')
@@ -269,7 +310,7 @@ def worker():
         for t in range(T+1):
             for idx in range(s+1):
                 result += gradient_buffer[t][idx] * coeffs[t][idx]
-        req = comm.Isend(np.ascontiguousarray(grad, dtype=float), dest=0, tag=0)
+        req = comm.Isend(np.ascontiguousarray(result, dtype=float), dest=0, tag=0)
         req.Wait()
         comm.send(time_spent_crt, dest=0, tag=0)
         model_under_operation = (model_under_operation + 1) % len(models)
@@ -282,7 +323,7 @@ rank = comm.Get_rank()
 x_train = np.reshape(x_train, (-1, 28, 28, 1)) / 255.
 x_test = np.reshape(x_test, (-1, 28, 28, 1)) / 255.
 batch_size_per_worker = 256
-num_slots = 6000
+num_slots = 100
 num_workers = 4
 num_models = 3
 T = 2
@@ -314,6 +355,10 @@ S[5, 0:4] = y2
 S[4, 4:8] = y0
 S[5, 4:8] = y1
 S[5, 8:12] = y0
+print(X)
+print(y0)
+print(y1)
+print(y2)
 ###Construction of G0#####
 Delta0 = np.zeros([2, 4])
 Delta0[0, :] = X
@@ -324,7 +369,7 @@ for i in range(4):
     indx = (i + 1) % 4
     Lambda0[i, 0] = -Delta0[1, indx] / Delta0[0, indx]
 G0 = np.dot(Lambda0, Delta0)
-print(G0)
+# print(G0)
 ###Construction of G1#####
 Delta1 = np.zeros([2, 4])
 Delta1[0, :] = X
@@ -335,7 +380,7 @@ for i in range(4):
     indx = (i + 1) % 4
     Lambda1[i, 0] = -Delta1[1, indx] / Delta1[0, indx]
 G1 = np.dot(Lambda1, Delta1)
-print(G1)
+# print(G1)
 ###Construction of G2#####
 Delta2 = np.zeros([2, 4])
 Delta2[0, :] = X
@@ -346,7 +391,7 @@ for i in range(4):
     indx = (i + 1) % 4
     Lambda2[i, 0] = -Delta2[1, indx] / Delta2[0, indx]
 G2 = np.dot(Lambda2, Delta2)
-print(G2)
+# print(G2)
 
 
 if rank == 0:
