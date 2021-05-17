@@ -338,15 +338,15 @@ num_slots = 6000
 num_workers = 4
 x = 1
 epsilon = 2
-B = 6
+B = 1
 W = x*B+1
 s = np.ceil((B*epsilon)/(W-1+B))
-num_models = 12
+num_models = 4
 lr_list = np.linspace(0.01, 0.1, num_models)
 models = [Model(lr) for lr in lr_list]
-a = 0.05
-b = 0.7
-num_states = 4
+a = 0.2
+b = 0.8
+num_states = 1
 if rank == 0:
     master()
 else:
